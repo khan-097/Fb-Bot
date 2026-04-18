@@ -1,7 +1,6 @@
 import os
 import requests
 import yt_dlp
-import subprocess
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -29,7 +28,7 @@ def webhook():
             if "message" in msg and "text" in msg["message"]:
                 text = msg["message"]["text"].strip()
                 if "http" in text:
-                    send_message(sender_id, "⏳ ভিডিও ডাউনলোড হচ্ছে...")
+                    send_message(sender_id, "অপেক্ষা করুন, ভিডিও ডাউনলোড হচ্ছে... ⏰")
                     download_and_send(sender_id, text)
                 else:
                     send_message(sender_id, "🎬 একটা ভিডিও লিংক পাঠান!\n\n▶️ YouTube\n📘 Facebook\n📸 Instagram\n🎵 TikTok")
@@ -41,21 +40,10 @@ def send_message(recipient_id, text):
         json={"recipient": {"id": recipient_id}, "message": {"text": text}}
     )
 
-def add_watermark(input_path, output_path):
-    text = "✦ DOWNLOADED BY KHAN-J7 ✦"
-    cmd = [
-        "ffmpeg", "-i", input_path,
-        "-vf",
-        f"drawtext=text='{text}':fontcolor=white:fontsize=20:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-th-20",
-        "-codec:a", "copy",
-        "-y", output_path
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-
 def download_and_send(recipient_id, url):
     try:
         ydl_opts = {
-            "outtmpl": "/tmp/original.%(ext)s",
+            "outtmpl": "/tmp/video.%(ext)s",
             "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
             "noplaylist": True,
             "extractor_args": {
@@ -71,36 +59,30 @@ def download_and_send(recipient_id, url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             ext = info.get("ext", "mp4")
-            title = info.get("title", "ভিডিও")
 
-        original = f"/tmp/original.{ext}"
-        watermarked = "/tmp/watermarked.mp4"
+        filepath = f"/tmp/video.{ext}"
 
-        if not os.path.exists(original):
+        if not os.path.exists(filepath):
             send_message(recipient_id, "❌ ফাইল তৈরি হয়নি।")
             return
 
-        send_message(recipient_id, f"✅ {title}\n🎨 Watermark যোগ হচ্ছে...")
-        add_watermark(original, watermarked)
-        os.remove(original)
-
-        if os.path.getsize(watermarked) > 25000000:
-            os.remove(watermarked)
+        if os.path.getsize(filepath) > 25000000:
+            os.remove(filepath)
             send_message(recipient_id, "❌ ভিডিও অনেক বড় (25MB+)।")
             return
 
-        send_message(recipient_id, "📤 পাঠানো হচ্ছে...")
-
-        with open(watermarked, "rb") as f:
+        with open(filepath, "rb") as f:
             requests.post(
                 f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}",
                 data={
                     "recipient": '{"id":"' + recipient_id + '"}',
                     "message": '{"attachment":{"type":"video","payload":{}}}'
                 },
-                files={"filedata": ("video.mp4", f, "video/mp4")}
+                files={"filedata": (f"video.{ext}", f, "video/mp4")}
             )
-        os.remove(watermarked)
+
+        os.remove(filepath)
+        send_message(recipient_id, "⬆️ DOWNLOADED BY KHAN-J7 ⬆️")
 
     except Exception as e:
         error = str(e)
