@@ -46,19 +46,13 @@ def download_and_send(recipient_id, url):
             "outtmpl": "/tmp/video.%(ext)s",
             "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
             "noplaylist": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "web"]
-                }
-            },
-            "http_headers": {
-                "User-Agent": "com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip"
-            }
+            "cookiefile": "www.youtube.com_cookies.txt",
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             ext = info.get("ext", "mp4")
+            title = info.get("title", "ভিডিও")
 
         filepath = f"/tmp/video.{ext}"
 
@@ -88,6 +82,8 @@ def download_and_send(recipient_id, url):
         error = str(e)
         if "Sign in" in error or "bot" in error:
             send_message(recipient_id, "❌ YouTube block করেছে। অন্য লিংক চেষ্টা করুন।")
+        elif "filesize" in error or "large" in error:
+            send_message(recipient_id, "❌ ভিডিও অনেক বড়।")
         else:
             send_message(recipient_id, "❌ ডাউনলোড হয়নি।")
 
