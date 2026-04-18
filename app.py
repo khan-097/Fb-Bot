@@ -37,10 +37,14 @@ def send_message(recipient_id, text):
 
 def download_and_send(recipient_id, url):
     try:
-        ydl_opts = {"outtmpl": "/tmp/video.%(ext)s", "format": "best[filesize<25M]"}
+        ydl_opts = {
+            "outtmpl": "/tmp/video.%(ext)s",
+            "format": "best[ext=mp4]/best",
+            "max_filesize": 25000000
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            ext = info["ext"]
+            ext = info.get("ext", "mp4")
         filepath = f"/tmp/video.{ext}"
         with open(filepath, "rb") as f:
             requests.post(
