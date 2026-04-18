@@ -1,12 +1,14 @@
 import os
 import requests
 import yt_dlp
+import subprocess
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+processed_ids = set()
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -19,14 +21,18 @@ def webhook():
     data = request.json
     for entry in data.get("entry", []):
         for msg in entry.get("messaging", []):
+            mid = msg.get("message", {}).get("mid", "")
+            if mid in processed_ids:
+                continue
+            processed_ids.add(mid)
             sender_id = msg["sender"]["id"]
             if "message" in msg and "text" in msg["message"]:
                 text = msg["message"]["text"].strip()
                 if "http" in text:
-                    send_message(sender_id, "⏳ ভিডিও ডাউনলোড হচ্ছে, একটু অপেক্ষা করুন...")
+                    send_message(sender_id, "⏳ ভিডিও ডাউনলোড হচ্ছে...")
                     download_and_send(sender_id, text)
                 else:
-                    send_message(sender_id, "🎬 একটা ভিডিও লিংক পাঠান!\n\nSupported:\n▶️ YouTube\n📘 Facebook\n📸 Instagram\n🎵 TikTok")
+                    send_message(sender_id, "🎬 একটা ভিডিও লিংক পাঠান!\n\n▶️ YouTube\n📘 Facebook\n📸 Instagram\n🎵 TikTok")
     return jsonify({"status": "ok"})
 
 def send_message(recipient_id, text):
@@ -35,20 +41,30 @@ def send_message(recipient_id, text):
         json={"recipient": {"id": recipient_id}, "message": {"text": text}}
     )
 
+def add_watermark(input_path, output_path):
+    text = "✦ DOWNLOADED BY KHAN-J7 ✦"
+    cmd = [
+        "ffmpeg", "-i", input_path,
+        "-vf",
+        f"drawtext=text='{text}':fontcolor=white:fontsize=20:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-th-20",
+        "-codec:a", "copy",
+        "-y", output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+
 def download_and_send(recipient_id, url):
     try:
         ydl_opts = {
-            "outtmpl": "/tmp/video.%(ext)s",
-            "format": "best[ext=mp4][filesize<25M]/best[filesize<25M]/best",
-            "max_filesize": 24000000,
+            "outtmpl": "/tmp/original.%(ext)s",
+            "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
             "noplaylist": True,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web"]
+                    "player_client": ["android", "ios", "web"]
                 }
             },
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36"
+                "User-Agent": "com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip"
             }
         }
 
@@ -57,43 +73,41 @@ def download_and_send(recipient_id, url):
             ext = info.get("ext", "mp4")
             title = info.get("title", "ভিডিও")
 
-        filepath = f"/tmp/video.{ext}"
+        original = f"/tmp/original.{ext}"
+        watermarked = "/tmp/watermarked.mp4"
 
-        if not os.path.exists(filepath):
-            send_message(recipient_id, "❌ ফাইল তৈরি হয়নি, আবার চেষ্টা করুন।")
+        if not os.path.exists(original):
+            send_message(recipient_id, "❌ ফাইল তৈরি হয়নি।")
             return
 
-        filesize = os.path.getsize(filepath)
-        if filesize > 25000000:
-            os.remove(filepath)
-            send_message(recipient_id, "❌ ভিডিওটা অনেক বড় (25MB এর বেশি)। ছোট ভিডিও পাঠান।")
+        send_message(recipient_id, f"✅ {title}\n🎨 Watermark যোগ হচ্ছে...")
+        add_watermark(original, watermarked)
+        os.remove(original)
+
+        if os.path.getsize(watermarked) > 25000000:
+            os.remove(watermarked)
+            send_message(recipient_id, "❌ ভিডিও অনেক বড় (25MB+)।")
             return
 
-        send_message(recipient_id, f"✅ ডাউনলোড হয়েছে: {title}\n📤 পাঠানো হচ্ছে...")
+        send_message(recipient_id, "📤 পাঠানো হচ্ছে...")
 
-        with open(filepath, "rb") as f:
-            response = requests.post(
+        with open(watermarked, "rb") as f:
+            requests.post(
                 f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}",
                 data={
                     "recipient": '{"id":"' + recipient_id + '"}',
                     "message": '{"attachment":{"type":"video","payload":{}}}'
                 },
-                files={"filedata": (f"video.{ext}", f, "video/mp4")}
+                files={"filedata": ("video.mp4", f, "video/mp4")}
             )
-
-        os.remove(filepath)
-
-        if response.status_code != 200:
-            send_message(recipient_id, "❌ ভিডিও পাঠাতে সমস্যা হয়েছে।")
+        os.remove(watermarked)
 
     except Exception as e:
         error = str(e)
         if "Sign in" in error or "bot" in error:
-            send_message(recipient_id, "❌ YouTube এই ভিডিওটা block করেছে। অন্য লিংক চেষ্টা করুন।")
-        elif "too large" in error or "filesize" in error:
-            send_message(recipient_id, "❌ ভিডিওটা অনেক বড়। ছোট ভিডিও পাঠান।")
+            send_message(recipient_id, "❌ YouTube block করেছে। অন্য লিংক চেষ্টা করুন।")
         else:
-            send_message(recipient_id, f"❌ ডাউনলোড হয়নি। লিংকটা সঠিক কিনা দেখুন।")
+            send_message(recipient_id, "❌ ডাউনলোড হয়নি।")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
