@@ -3,7 +3,7 @@ import requests
 import yt_dlp
 from flask import Flask, request, jsonify
 
-app = Flask(__name__)
+app = Flask(_name_)
 
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
@@ -40,29 +40,61 @@ def send_message(recipient_id, text):
         json={"recipient": {"id": recipient_id}, "message": {"text": text}}
     )
 
+def get_download_url_cobalt(url):
+    try:
+        response = requests.post(
+            "https://api.cobalt.tools/",
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            json={
+                "url": url,
+                "videoQuality": "720",
+                "filenameStyle": "basic"
+            },
+            timeout=30
+        )
+        data = response.json()
+        if data.get("status") in ["stream", "redirect", "tunnel"]:
+            return data.get("url")
+        elif data.get("status") == "picker":
+            return data["picker"][0]["url"]
+        return None
+    except:
+        return None
+
 def download_and_send(recipient_id, url):
     try:
-        ydl_opts = {
-            "outtmpl": "/tmp/video.%(ext)s",
-            "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
-            "noplaylist": True,
-            "cookiefile": "www.youtube.com_cookies.txt",
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["web", "android"]
-                }
-            },
-            "merge_output_format": "mp4",
-        }
+        # প্রথমে cobalt দিয়ে চেষ্টা (YouTube এর জন্য)
+        download_url = None
+        is_youtube = "youtube.com" in url or "youtu.be" in url
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            ext = info.get("ext", "mp4")
-            title = info.get("title", "ভিডিও")
+        if is_youtube:
+            download_url = get_download_url_cobalt(url)
 
-        filepath = f"/tmp/video.{ext}"
-        if not os.path.exists(filepath):
+        if download_url:
+            # cobalt থেকে download
+            response = requests.get(download_url, timeout=60, stream=True)
             filepath = "/tmp/video.mp4"
+            with open(filepath, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        else:
+            # Facebook/Instagram/TikTok এর জন্য yt-dlp
+            ydl_opts = {
+                "outtmpl": "/tmp/video.%(ext)s",
+                "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
+                "noplaylist": True,
+                "merge_output_format": "mp4",
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                ext = info.get("ext", "mp4")
+
+            filepath = f"/tmp/video.{ext}"
+            if not os.path.exists(filepath):
+                filepath = "/tmp/video.mp4"
 
         if not os.path.exists(filepath):
             send_message(recipient_id, "❌ ফাইল তৈরি হয়নি।")
@@ -88,14 +120,12 @@ def download_and_send(recipient_id, url):
 
     except Exception as e:
         error = str(e)
-        if "Sign in" in error or "bot" in error:
-            send_message(recipient_id, "❌ YouTube block করেছে।")
-        elif "429" in error or "Too Many" in error:
+        if "429" in error or "Too Many" in error:
             send_message(recipient_id, "❌ YouTube busy। ১ মিনিট পরে চেষ্টা করুন।")
         elif "filesize" in error or "large" in error:
             send_message(recipient_id, "❌ ভিডিও অনেক বড়।")
         else:
             send_message(recipient_id, "❌ ডাউনলোড হয়নি। অন্য লিংক চেষ্টা করুন।")
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     app.run(host="0.0.0.0", port=5000)
