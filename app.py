@@ -44,17 +44,25 @@ def download_and_send(recipient_id, url):
     try:
         ydl_opts = {
             "outtmpl": "/tmp/video.%(ext)s",
-            "format": "best[ext=mp4][filesize<24M]/best[filesize<24M]/best",
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "noplaylist": True,
             "cookiefile": "www.youtube.com_cookies.txt",
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["ios"],
+                    "player_skip": ["webpage", "configs"]
+                }
+            },
+            "sleep_interval": 2,
+            "max_sleep_interval": 5,
+            "merge_output_format": "mp4",
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            ext = info.get("ext", "mp4")
             title = info.get("title", "ভিডিও")
 
-        filepath = f"/tmp/video.{ext}"
+        filepath = "/tmp/video.mp4"
 
         if not os.path.exists(filepath):
             send_message(recipient_id, "❌ ফাইল তৈরি হয়নি।")
@@ -72,7 +80,7 @@ def download_and_send(recipient_id, url):
                     "recipient": '{"id":"' + recipient_id + '"}',
                     "message": '{"attachment":{"type":"video","payload":{}}}'
                 },
-                files={"filedata": (f"video.{ext}", f, "video/mp4")}
+                files={"filedata": ("video.mp4", f, "video/mp4")}
             )
 
         os.remove(filepath)
@@ -81,11 +89,13 @@ def download_and_send(recipient_id, url):
     except Exception as e:
         error = str(e)
         if "Sign in" in error or "bot" in error:
-            send_message(recipient_id, "❌ YouTube block করেছে। অন্য লিংক চেষ্টা করুন।")
+            send_message(recipient_id, "❌ YouTube block করেছে।")
+        elif "Too Many Requests" in error or "429" in error:
+            send_message(recipient_id, "❌ YouTube এখন busy। ১ মিনিট পরে আবার চেষ্টা করুন।")
         elif "filesize" in error or "large" in error:
             send_message(recipient_id, "❌ ভিডিও অনেক বড়।")
         else:
-            send_message(recipient_id, "❌ ডাউনলোড হয়নি।")
+            send_message(recipient_id, "❌ ডাউনলোড হয়নি। অন্য লিংক চেষ্টা করুন।")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
